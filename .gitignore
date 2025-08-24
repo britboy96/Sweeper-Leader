@@ -1,0 +1,47 @@
+# macOS system files
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Bot data (don’t upload private stats/backups)
+backup.json
+birthdays.json
+epic_links.json
+data/*.json
+
+# Virtual environment (if you make one later)
+venv/
+# macOS system files
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Bot data (don’t upload private stats/backups)
+backup.json
+birthdays.json
+epic_links.json
+data/*.json
+
+# Virtual environment (if you make one later)
+.venv/
+env/
+venv/
+
+# Logs
+*.log
+
+# Render/Build cache
+.cache/
+
+git add .gitignore
+git commit -m "Replace gitignore.txt with proper .gitignore"
+git push origin main
+
+.env
