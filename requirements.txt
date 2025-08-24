@@ -3,3 +3,4 @@ aiohttp
 python-dotenv
 flask
 Pillow
+
