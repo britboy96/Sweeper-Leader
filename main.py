@@ -49,5 +49,7 @@ async def on_ready():
 @bot.tree.command(name="ping", description="Test bot response")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("🏓 Pong!")
+from keep_alive import keep_alive
 
+keep_alive()  # starts Flask server so Render doesn’t kill the bot
 bot.run(DISCORD_TOKEN)
