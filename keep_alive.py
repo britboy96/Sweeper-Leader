@@ -1,17 +1,15 @@
 from flask import Flask
-from threading import Thread
 import os
 
-app = Flask('')
+app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
-    return "SweeperLeader bot is running!"
+    return "✅ SweeperLeader bot is alive and running!"
 
 def run():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 10000))  # Render gives us this env var
+    app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.start()
+    run()
