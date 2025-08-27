@@ -25,7 +25,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timedelta
 from keep_alive import keep_alive
-from generate_leaderboard_image import generate_kd_leaderboard
+from generate_leaderboard_image import generate_leaderboard_image
 from leaderboard_utils import assign_rank, get_rank_role
 
 # --- Config ---
