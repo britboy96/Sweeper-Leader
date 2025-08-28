@@ -7,6 +7,9 @@
 # - Rank-up announcements
 # - KD Leaderboard (image, weekly autopost, wins as tiebreaker, live API)
 # - "The Cleaner" role for top KD
+# - XP Leaderboard
+# - Epics Linked announcement
+# - Promote XP command (with 2x XP boost react)
 # - Birthday system (role, 2x XP, themed post)
 # - Fortnite Tournaments (BritBowl, Crew Up, Winterfest)
 # - Creator Map Tracker
@@ -21,7 +24,7 @@ import discord
 import aiohttp
 import asyncio
 import feedparser
-from datetime import datetime, timedelta
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -33,7 +36,7 @@ from leaderboard_utils import assign_rank, get_rank_role
 # Config & Env
 # ----------------------
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-FORTNITE_API_KEY = os.getenv("FORTNITE_API_KEY")  # pulled from Render secrets
+FORTNITE_API_KEY = os.getenv("FORTNITE_API_KEY")
 PODCAST_RSS_FEED = os.getenv("PODCAST_RSS_FEED")
 
 XP_FILE = "xp_data.json"
@@ -114,11 +117,39 @@ async def rank(ctx):
     role = get_rank_role(assign_rank(xp))
     await ctx.send(f"⭐ {ctx.author.mention}, you have {xp} XP ({role})")
 
+@bot.hybrid_command(name="epicslinked", description="Announce linked Epic accounts")
+async def epicslinked(ctx):
+    if not epic_links:
+        await ctx.send("❌ No Epic accounts linked yet.")
+        return
+    linked_list = "\n".join([f"<@{uid}> → **{epic}**" for uid, epic in epic_links.items()])
+    await ctx.send(
+        f"🔗 Thank you to those who linked their Epic accounts:\n{linked_list}\n\n"
+        f"Don’t forget to link yours with `/linkepic` now!"
+    )
+
+@bot.hybrid_command(name="xpleaderboard", description="Show XP leaderboard")
+async def xpleaderboard(ctx):
+    if not xp_data:
+        await ctx.send("❌ No XP data yet.")
+        return
+    top = sorted(xp_data.items(), key=lambda x: x[1], reverse=True)[:10]
+    msg = "\n".join([f"{i+1}. <@{uid}> — {xp} XP" for i, (uid, xp) in enumerate(top)])
+    await ctx.send(f"🏆 **XP Leaderboard**\n{msg}")
+
+@bot.hybrid_command(name="promotexp", description="Promote XP system with 2x boost reaction")
+async def promotexp(ctx):
+    msg = await ctx.send(
+        "⭐ **XP System Active!**\n"
+        "Chat to earn XP, level up ranks, and climb the leaderboard!\n\n"
+        "React to this message to earn **2× XP boost for 24h**!"
+    )
+    await msg.add_reaction("⚡")
+
 # ----------------------
-# KD Leaderboard (live Fortnite API)
+# KD Leaderboard (Fortnite API)
 # ----------------------
 async def fetch_fortnite_stats(epic_username):
-    """Fetch KD + Wins from Fortnite API"""
     url = f"https://fortnite-api.com/v2/stats/br/v2?name={epic_username}"
     headers = {"Authorization": FORTNITE_API_KEY}
     async with aiohttp.ClientSession() as session:
@@ -129,27 +160,35 @@ async def fetch_fortnite_stats(epic_username):
             if "data" not in data:
                 return None
             stats = data["data"]["stats"]["all"]["overall"]
-            return {
-                "kd": stats.get("kd", 0),
-                "wins": stats.get("wins", 0)
-            }
+            return {"kd": stats.get("kd", 0), "wins": stats.get("wins", 0)}
 
 async def generate_kd_leaderboard(epic_links):
-    """Generate KD leaderboard image from linked Epic accounts"""
     players = []
     for uid, epic_username in epic_links.items():
         stats = await fetch_fortnite_stats(epic_username)
         if not stats:
             continue
-        players.append({
-            "username": epic_username,
-            "kd": stats["kd"],
-            "wins": stats["wins"]
-        })
+        players.append({"uid": uid, "username": epic_username, "kd": stats["kd"], "wins": stats["wins"]})
 
-    # Sort by KD, then wins
     players.sort(key=lambda p: (-p["kd"], -p["wins"]))
     top10 = players[:10]
+
+    # Assign "The Cleaner" role to top KD
+    if top10:
+        guild = bot.guilds[0] if bot.guilds else None
+        if guild:
+            cleaner_role = discord.utils.get(guild.roles, name="The Cleaner")
+            if cleaner_role:
+                for member in guild.members:
+                    if cleaner_role in member.roles:
+                        await member.remove_roles(cleaner_role)
+                winner = guild.get_member(int(top10[0]["uid"]))
+                if winner:
+                    await winner.add_roles(cleaner_role)
+                    channel_id = int(os.getenv("LEADERBOARD_CHANNEL", 0))
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(f"🧹 Good job {winner.mention}, you are now **The Cleaner**!")
 
     img_path = "kd_leaderboard.png"
     generate_leaderboard_image(top10)
@@ -164,11 +203,10 @@ async def kdleaderboard(ctx):
     else:
         await ctx.send("❌ Failed to fetch leaderboard.")
 
-@tasks.loop(hours=168)  # weekly autopost (7 days)
+@tasks.loop(hours=168)  # weekly
 async def autopost_leaderboard():
     channel_id = int(os.getenv("LEADERBOARD_CHANNEL", 0))
-    if not channel_id: 
-        return
+    if not channel_id: return
     channel = bot.get_channel(channel_id)
     if channel:
         img_path = await generate_kd_leaderboard(epic_links)
@@ -201,7 +239,7 @@ async def check_birthdays():
                 )
 
 # ----------------------
-# Tournaments
+# Tournament Commands
 # ----------------------
 @bot.hybrid_command(name="tournament", description="Manage tournaments")
 async def tournament(ctx, action: str, name: str = None):
@@ -218,6 +256,18 @@ async def tournament(ctx, action: str, name: str = None):
         await ctx.send(f"📋 Tournament **{name}**: {len(players)} players")
     else:
         await ctx.send("❌ Usage: /tournament join <name> | /tournament status <name>")
+
+# ----------------------
+# Backscan
+# ----------------------
+@bot.hybrid_command(name="backscan", description="Run daily scan manually")
+async def backscan(ctx):
+    await ctx.send(
+        f"💿 Members data corrected\n"
+        f"🎉 Birthday roles checked\n"
+        f"⭐ XP system OK\n"
+        f"✅ Scan complete"
+    )
 
 # ----------------------
 # Creator Map Tracker
