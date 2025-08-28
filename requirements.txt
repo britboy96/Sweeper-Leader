@@ -3,4 +3,4 @@ aiohttp
 python-dotenv
 flask
 Pillow
-
+feedparser
