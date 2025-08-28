@@ -164,7 +164,7 @@ async def kdleaderboard(ctx):
     else:
         await ctx.send("❌ Failed to fetch leaderboard.")
 
-@tasks.loop(weeks=1)
+@tasks.loop(hours=168)  # weekly autopost (7 days)
 async def autopost_leaderboard():
     channel_id = int(os.getenv("LEADERBOARD_CHANNEL", 0))
     if not channel_id: 
