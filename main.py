@@ -7,7 +7,7 @@
 # - Rank-up announcements
 # - KD Leaderboard (image, weekly autopost, wins as tiebreaker, live API)
 # - "The Cleaner" role for top KD
-# - XP Leaderboard
+# - XP Leaderboard (rank-grouped embed)
 # - Epics Linked announcement
 # - Promote XP command (with 2x XP boost react)
 # - Birthday system (role, 2x XP, themed post)
@@ -128,14 +128,46 @@ async def epicslinked(ctx):
         f"Don’t forget to link yours with `/linkepic` now!"
     )
 
-@bot.hybrid_command(name="xpleaderboard", description="Show XP leaderboard")
+@bot.hybrid_command(name="xpleaderboard", description="Show XP leaderboard grouped by rank")
 async def xpleaderboard(ctx):
     if not xp_data:
         await ctx.send("❌ No XP data yet.")
         return
-    top = sorted(xp_data.items(), key=lambda x: x[1], reverse=True)[:10]
-    msg = "\n".join([f"{i+1}. <@{uid}> — {xp} XP" for i, (uid, xp) in enumerate(top)])
-    await ctx.send(f"🏆 **XP Leaderboard**\n{msg}")
+
+    # Rank order top → bottom
+    rank_order = [
+        "UNREAL", "CHAMPION", "ELITE",
+        "DIAMOND III", "DIAMOND II", "DIAMOND I",
+        "PLATINUM III", "PLATINUM II", "PLATINUM I",
+        "GOLD III", "GOLD II", "GOLD I",
+        "SILVER III", "SILVER II", "SILVER I",
+        "BRONZE III", "BRONZE II", "BRONZE I"
+    ]
+
+    embed = discord.Embed(title="🏆 XP Leaderboard", color=discord.Color.blue())
+
+    # Collect members into rank groups
+    grouped = {rank: [] for rank in rank_order}
+    for uid, xp in xp_data.items():
+        rank = get_rank_role(assign_rank(xp))
+        if rank in grouped:
+            grouped[rank].append((uid, xp))
+
+    # Add fields by rank
+    for rank in rank_order:
+        if grouped[rank]:
+            # Sort users in this rank by XP descending
+            members = sorted(grouped[rank], key=lambda x: x[1], reverse=True)
+            lines = [f"<@{uid}> — {xp} XP" for uid, xp in members]
+            embed.add_field(name=rank, value="\n".join(lines), inline=False)
+
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name="grantxp", description="Grant XP to a user (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def grantxp(ctx, member: discord.Member, amount: int):
+    await add_xp(member.id, amount, ctx.channel)
+    await ctx.send(f"✅ Granted {amount} XP to {member.mention}")
 
 @bot.hybrid_command(name="promotexp", description="Promote XP system with 2x boost reaction")
 async def promotexp(ctx):
@@ -325,3 +357,4 @@ async def on_ready():
 # ----------------------
 keep_alive()  # Flask keepalive for Render
 bot.run(DISCORD_TOKEN)
+
