@@ -75,6 +75,19 @@ birthdays = load_json(BIRTHDAY_FILE, {})
 tournaments = load_json(TOURNAMENT_FILE, {})
 
 # ----------------------
+# Helper for Discord responses
+# ----------------------
+async def send_reply(ctx, content=None, embed=None, file=None):
+    try:
+        if ctx.interaction and not ctx.interaction.response.is_done():
+            await ctx.interaction.response.send_message(content or "", embed=embed, file=file)
+        else:
+            await ctx.reply(content or "", embed=embed, file=file)
+    except Exception:
+        if content or embed or file:
+            await ctx.channel.send(content or "", embed=embed, file=file)
+
+# ----------------------
 # XP + Rank System
 # ----------------------
 async def add_xp(user_id, amount, channel=None):
@@ -113,21 +126,22 @@ async def on_reaction_add(reaction, user):
 # ----------------------
 @bot.hybrid_command(name="ping", description="Test the bot")
 async def ping(ctx):
-    await ctx.send("🏓 Pong!")
+    await send_reply(ctx, "🏓 Pong!")
 
 @bot.hybrid_command(name="rank", description="Check your XP and rank")
 async def rank(ctx):
     xp = xp_data.get(str(ctx.author.id), 0)
     role = get_rank_role(assign_rank(xp))
-    await ctx.send(f"⭐ {ctx.author.mention}, you have {xp} XP ({role})")
+    await send_reply(ctx, f"⭐ {ctx.author.mention}, you have {xp} XP ({role})")
 
 @bot.hybrid_command(name="epicslinked", description="Announce linked Epic accounts")
 async def epicslinked(ctx):
     if not epic_links:
-        await ctx.send("❌ No Epic accounts linked yet.")
+        await send_reply(ctx, "❌ No Epic accounts linked yet.")
         return
     linked_list = "\n".join([f"<@{uid}> → **{epic}**" for uid, epic in epic_links.items()])
-    await ctx.send(
+    await send_reply(
+        ctx,
         f"🔗 Thank you to those who linked their Epic accounts:\n{linked_list}\n\n"
         f"Don’t forget to link yours with `/linkepic` now!"
     )
@@ -135,7 +149,7 @@ async def epicslinked(ctx):
 @bot.hybrid_command(name="xpleaderboard", description="Show XP leaderboard grouped by rank")
 async def xpleaderboard(ctx):
     if not xp_data:
-        await ctx.send("❌ No XP data yet.")
+        await send_reply(ctx, "❌ No XP data yet.")
         return
 
     rank_order = [
@@ -161,13 +175,13 @@ async def xpleaderboard(ctx):
             lines = [f"<@{uid}> — {xp} XP" for uid, xp in members]
             embed.add_field(name=rank, value="\n".join(lines), inline=False)
 
-    await ctx.send(embed=embed)
+    await send_reply(ctx, embed=embed)
 
 @bot.hybrid_command(name="grantxp", description="Grant XP to a user (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def grantxp(ctx, member: discord.Member, amount: int):
     await add_xp(member.id, amount, ctx.channel)
-    await ctx.send(f"✅ Granted {amount} XP to {member.mention}")
+    await send_reply(ctx, f"✅ Granted {amount} XP to {member.mention}")
 
 @bot.hybrid_command(name="promotexp", description="Promote XP system with 2x boost reaction")
 async def promotexp(ctx):
@@ -230,12 +244,12 @@ async def generate_kd_leaderboard(epic_links):
 
 @bot.hybrid_command(name="kdleaderboard", description="Show KD leaderboard")
 async def kdleaderboard(ctx):
-    await ctx.send("📊 Fetching Fortnite stats...")
+    await send_reply(ctx, "📊 Fetching Fortnite stats...")
     img_path = await generate_kd_leaderboard(epic_links)
     if img_path:
-        await ctx.send(file=discord.File(img_path))
+        await send_reply(ctx, file=discord.File(img_path))
     else:
-        await ctx.send("❌ Failed to fetch leaderboard.")
+        await send_reply(ctx, "❌ Failed to fetch leaderboard.")
 
 @tasks.loop(hours=168)  # weekly
 async def autopost_leaderboard():
@@ -255,9 +269,9 @@ async def setbirthday(ctx, date: str):
         datetime.strptime(date, "%Y-%m-%d")
         birthdays[str(ctx.author.id)] = date
         save_json(BIRTHDAY_FILE, birthdays)
-        await ctx.send(f"🎂 {ctx.author.mention}, birthday set to {date}")
+        await send_reply(ctx, f"🎂 {ctx.author.mention}, birthday set to {date}")
     except ValueError:
-        await ctx.send("❌ Invalid format. Use YYYY-MM-DD")
+        await send_reply(ctx, "❌ Invalid format. Use YYYY-MM-DD")
 
 @tasks.loop(hours=24)
 async def check_birthdays():
@@ -282,19 +296,20 @@ async def tournament(ctx, action: str, name: str = None):
         if uid not in tournaments[name]:
             tournaments[name].append(uid)
             save_json(TOURNAMENT_FILE, tournaments)
-            await ctx.send(f"⚔️ {ctx.author.mention} joined **{name}**!")
+            await send_reply(ctx, f"⚔️ {ctx.author.mention} joined **{name}**!")
     elif action == "status" and name:
         players = tournaments.get(name, [])
-        await ctx.send(f"📋 Tournament **{name}**: {len(players)} players")
+        await send_reply(ctx, f"📋 Tournament **{name}**: {len(players)} players")
     else:
-        await ctx.send("❌ Usage: /tournament join <name> | /tournament status <name>")
+        await send_reply(ctx, "❌ Usage: /tournament join <name> | /tournament status <name>")
 
 # ----------------------
 # Backscan
 # ----------------------
 @bot.hybrid_command(name="backscan", description="Run daily scan manually")
 async def backscan(ctx):
-    await ctx.send(
+    await send_reply(
+        ctx,
         f"💿 Members data corrected\n"
         f"🎉 Birthday roles checked\n"
         f"⭐ XP system OK\n"
@@ -358,4 +373,3 @@ async def on_ready():
 # ----------------------
 keep_alive()
 bot.run(DISCORD_TOKEN)
-
