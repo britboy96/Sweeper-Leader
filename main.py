@@ -38,6 +38,9 @@ from leaderboard_utils import assign_rank, get_rank_role
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 FORTNITE_API_KEY = os.getenv("FORTNITE_API_KEY")
 PODCAST_RSS_FEED = os.getenv("PODCAST_RSS_FEED")
+LEADERBOARD_CHANNEL_ID = int(os.getenv("LEADERBOARD_CHANNEL", 0))
+BIRTHDAY_CHANNEL_ID = int(os.getenv("BIRTHDAY_CHANNEL", 0))
+PODCAST_CHANNEL_ID = int(os.getenv("PODCAST_CHANNEL", 0))
 
 XP_FILE = "xp_data.json"
 EPIC_FILE = "epic_links.json"
@@ -101,7 +104,8 @@ async def on_message(message):
 
 @bot.event
 async def on_reaction_add(reaction, user):
-    if user.bot: return
+    if user.bot:
+        return
     await add_xp(user.id, 10, reaction.message.channel)
 
 # ----------------------
@@ -134,7 +138,6 @@ async def xpleaderboard(ctx):
         await ctx.send("❌ No XP data yet.")
         return
 
-    # Rank order top → bottom
     rank_order = [
         "UNREAL", "CHAMPION", "ELITE",
         "DIAMOND III", "DIAMOND II", "DIAMOND I",
@@ -145,18 +148,15 @@ async def xpleaderboard(ctx):
     ]
 
     embed = discord.Embed(title="🏆 XP Leaderboard", color=discord.Color.blue())
-
-    # Collect members into rank groups
     grouped = {rank: [] for rank in rank_order}
+
     for uid, xp in xp_data.items():
         rank = get_rank_role(assign_rank(xp))
         if rank in grouped:
             grouped[rank].append((uid, xp))
 
-    # Add fields by rank
     for rank in rank_order:
         if grouped[rank]:
-            # Sort users in this rank by XP descending
             members = sorted(grouped[rank], key=lambda x: x[1], reverse=True)
             lines = [f"<@{uid}> — {xp} XP" for uid, xp in members]
             embed.add_field(name=rank, value="\n".join(lines), inline=False)
@@ -184,15 +184,18 @@ async def promotexp(ctx):
 async def fetch_fortnite_stats(epic_username):
     url = f"https://fortnite-api.com/v2/stats/br/v2?name={epic_username}"
     headers = {"Authorization": FORTNITE_API_KEY}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            if "data" not in data:
-                return None
-            stats = data["data"]["stats"]["all"]["overall"]
-            return {"kd": stats.get("kd", 0), "wins": stats.get("wins", 0)}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                if "data" not in data:
+                    return None
+                stats = data["data"]["stats"]["all"]["overall"]
+                return {"kd": stats.get("kd", 0), "wins": stats.get("wins", 0)}
+    except Exception:
+        return None
 
 async def generate_kd_leaderboard(epic_links):
     players = []
@@ -205,7 +208,6 @@ async def generate_kd_leaderboard(epic_links):
     players.sort(key=lambda p: (-p["kd"], -p["wins"]))
     top10 = players[:10]
 
-    # Assign "The Cleaner" role to top KD
     if top10:
         guild = bot.guilds[0] if bot.guilds else None
         if guild:
@@ -217,10 +219,10 @@ async def generate_kd_leaderboard(epic_links):
                 winner = guild.get_member(int(top10[0]["uid"]))
                 if winner:
                     await winner.add_roles(cleaner_role)
-                    channel_id = int(os.getenv("LEADERBOARD_CHANNEL", 0))
-                    channel = bot.get_channel(channel_id)
-                    if channel:
-                        await channel.send(f"🧹 Good job {winner.mention}, you are now **The Cleaner**!")
+                    if LEADERBOARD_CHANNEL_ID:
+                        channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
+                        if channel:
+                            await channel.send(f"🧹 Good job {winner.mention}, you are now **The Cleaner**!")
 
     img_path = "kd_leaderboard.png"
     generate_leaderboard_image(top10)
@@ -237,13 +239,12 @@ async def kdleaderboard(ctx):
 
 @tasks.loop(hours=168)  # weekly
 async def autopost_leaderboard():
-    channel_id = int(os.getenv("LEADERBOARD_CHANNEL", 0))
-    if not channel_id: return
-    channel = bot.get_channel(channel_id)
-    if channel:
-        img_path = await generate_kd_leaderboard(epic_links)
-        if img_path:
-            await channel.send("📊 Weekly KD Leaderboard", file=discord.File(img_path))
+    if LEADERBOARD_CHANNEL_ID:
+        channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
+        if channel:
+            img_path = await generate_kd_leaderboard(epic_links)
+            if img_path:
+                await channel.send("📊 Weekly KD Leaderboard", file=discord.File(img_path))
 
 # ----------------------
 # Birthday System
@@ -262,9 +263,8 @@ async def setbirthday(ctx, date: str):
 async def check_birthdays():
     today = datetime.utcnow().strftime("%m-%d")
     for uid, date in birthdays.items():
-        if date[5:] == today:
-            channel_id = int(os.getenv("BIRTHDAY_CHANNEL", 0))
-            channel = bot.get_channel(channel_id)
+        if date[5:] == today and BIRTHDAY_CHANNEL_ID:
+            channel = bot.get_channel(BIRTHDAY_CHANNEL_ID)
             if channel:
                 await channel.send(
                     f"🎮 <@{uid}> has reached **Level {datetime.utcnow().year - int(date[:4])}** today! 🎉"
@@ -306,19 +306,20 @@ async def backscan(ctx):
 # ----------------------
 @tasks.loop(hours=1)
 async def check_creator_maps():
-    return  # TODO: implement later
+    return  # To implement later
 
 # ----------------------
 # Podcast Autoposter
 # ----------------------
 @tasks.loop(hours=12)
 async def check_podcast():
-    if not PODCAST_RSS_FEED: return
+    if not PODCAST_RSS_FEED or not PODCAST_CHANNEL_ID:
+        return
     feed = feedparser.parse(PODCAST_RSS_FEED)
-    if not feed.entries: return
+    if not feed.entries:
+        return
     latest = feed.entries[0]
-    channel_id = int(os.getenv("PODCAST_CHANNEL", 0))
-    channel = bot.get_channel(channel_id)
+    channel = bot.get_channel(PODCAST_CHANNEL_ID)
     if channel:
         await channel.send(f"🎙️ New episode: {latest.title}\n{latest.link}")
 
@@ -355,6 +356,6 @@ async def on_ready():
 # ----------------------
 # Start
 # ----------------------
-keep_alive()  # Flask keepalive for Render
+keep_alive()
 bot.run(DISCORD_TOKEN)
 
