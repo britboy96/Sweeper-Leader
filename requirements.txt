@@ -4,3 +4,4 @@ python-dotenv
 flask
 Pillow
 feedparser
+requests==2.31.0
