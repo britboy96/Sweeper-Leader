@@ -160,12 +160,6 @@ async def linkepic(ctx, epic_username: str):
     save_json(EPIC_FILE, epic_links)
     await send_reply(ctx, f"✅ Linked your Epic account as **{epic_username}**")
 
-@bot.command(name="linkepic")
-async def linkepic_legacy(ctx, epic_username: str):
-    epic_links[str(ctx.author.id)] = epic_username
-    save_json(EPIC_FILE, epic_links)
-    await ctx.send(f"✅ Linked your Epic account as **{epic_username}**")
-
 @bot.hybrid_command(name="epicslinked", description="List Epic accounts")
 async def epicslinked(ctx):
     if not epic_links:
