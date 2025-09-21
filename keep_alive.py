@@ -1,41 +1,25 @@
 from flask import Flask
 from threading import Thread
-import requests
-import os
+import asyncio
+import main
 
-app = Flask('')
-
-DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-APPLICATION_ID = os.getenv("APPLICATION_ID")  # add in Render env vars
-GUILD_ID = os.getenv("GUILD_ID")              # add in Render env vars
+app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "I am alive!"
+    return "I am alive!", 200
 
-@app.route('/ping')
-def ping():
-    # Call Discord API to trigger /health command
-    url = f"https://discord.com/api/v10/applications/{APPLICATION_ID}/guilds/{GUILD_ID}/commands"
-    headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
-
-    # Look for the /health command
-    r = requests.get(url, headers=headers)
-    if r.status_code == 200:
-        cmds = r.json()
-        health_cmd = next((c for c in cmds if c["name"] == "health"), None)
-        if health_cmd:
-            # Trigger the command directly
-            invoke_url = f"https://discord.com/api/v10/interactions"
-            payload = {
-                "type": 2,
-                "application_id": APPLICATION_ID,
-                "guild_id": GUILD_ID,
-                "data": {"id": health_cmd["id"], "name": "health", "type": 1}
-            }
-            requests.post(invoke_url, headers=headers, json=payload)
-
-    return "Pinged /health"
+@app.route('/healthz')
+def healthz():
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(main.run_self_maintenance(), loop)
+        else:
+            loop.run_until_complete(main.run_self_maintenance())
+    except Exception as e:
+        return f"ERROR: {e}", 500
+    return "✅ Self-maintenance complete", 200
 
 def run():
     app.run(host="0.0.0.0", port=10000)

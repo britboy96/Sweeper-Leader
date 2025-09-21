@@ -45,7 +45,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 FORTNITE_API_KEY = os.getenv("FORTNITE_API_KEY")
 PODCAST_RSS_FEED = os.getenv("PODCAST_RSS_FEED")
 LEADERBOARD_CHANNEL_ID = int(os.getenv("LEADERBOARD_CHANNEL", 0))
-SYSTEM_CHANNEL_ID = 1157390354811719782
+SYSTEM_CHANNEL_ID = 1140430213440876716
 LOGS_CHANNEL_ID = 1143238719541891154   # For /health pings
 BIRTHDAY_CHANNEL_ID = int(os.getenv("BIRTHDAY_CHANNEL", 0))
 PODCAST_CHANNEL_ID = int(os.getenv("PODCAST_CHANNEL", 0))
@@ -332,6 +332,57 @@ async def run_backscan():
     img = await generate_kd_leaderboard(epic_links)
     if img and leaderboard_channel():
         await leaderboard_channel().send("📊 Catch-up KD Leaderboard", file=discord.File(img))
+
+# ----------------------
+# Deep Self-Maintenance
+# ----------------------
+async def run_self_maintenance():
+    try:
+        # 1. Check birthdays
+        await check_birthdays()
+
+        # 2. Rebuild KD leaderboard + update Cleaner
+        img = await generate_kd_leaderboard(epic_links)
+        if img and leaderboard_channel():
+            await leaderboard_channel().send("📊 Self-maintenance KD Leaderboard", file=discord.File(img))
+
+        # 3. Ensure QOTD has gone out
+        if qotd_data["questions"]:
+            available = [q for q in qotd_data["questions"] if q not in used_qotd]
+            if not available:
+                used_qotd.clear()
+                available = qotd_data["questions"]
+            q = random.choice(available)
+            used_qotd.append(q)
+            ch = bot.get_channel(int(os.getenv("QOTD_CHANNEL_ID", SYSTEM_CHANNEL_ID)))
+            if ch:
+                await ch.send(f"❓ **QOTD (catch-up):** {q}")
+
+        # 4. Recheck podcast RSS
+        if PODCAST_RSS_FEED and PODCAST_CHANNEL_ID:
+            feed = feedparser.parse(PODCAST_RSS_FEED)
+            if feed.entries:
+                latest = feed.entries[0]
+                ch = bot.get_channel(PODCAST_CHANNEL_ID)
+                if ch:
+                    await ch.send(f"🎙️ Podcast check: Latest episode is {latest.title}\n{latest.link}")
+
+        # 5. Backup everything
+        save_json(BACKUP_FILE, {
+            "xp": xp_data,
+            "epic": epic_links,
+            "birthdays": birthdays,
+            "tournaments": tournaments,
+            "creator_maps": creator_maps
+        })
+
+        # 6. Log success
+        if logs_channel():
+            await logs_channel().send("🛠️ Self-maintenance completed successfully.")
+
+    except Exception as e:
+        if logs_channel():
+            await logs_channel().send(f"⚠️ Self-maintenance error: {e}")
 
 @bot.hybrid_command(name="backscan", description="Run daily scan manually")
 async def backscan(ctx):
