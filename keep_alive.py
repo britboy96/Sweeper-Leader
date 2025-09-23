@@ -1,7 +1,6 @@
 from flask import Flask
 from threading import Thread
 import asyncio
-import main
 
 app = Flask(__name__)
 
