@@ -114,7 +114,6 @@ async def send_reply(ctx, content=None, embed=None, file=None, ephemeral=False):
     except Exception:
         if content or embed or file:
             await ctx.channel.send(content or "", embed=embed, file=file)
-
 # ----------------------
 # XP + Rank System
 # ----------------------
@@ -154,19 +153,70 @@ async def on_reaction_add(reaction, user):
     await add_xp(user.id, 10, reaction.message.channel)
 
 # ----------------------
+# Daily Claim
+# ----------------------
+DAILY_FILE = "daily_claims.json"
+daily_claims = load_json(DAILY_FILE, {})
+
+@bot.hybrid_command(name="daily", description="Claim your daily XP bonus")
+async def daily(ctx):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
+    uid = str(ctx.author.id)
+    today = date.today().isoformat()
+
+    last_claim = daily_claims.get(uid)
+    if last_claim == today:
+        return await ctx.followup.send("⏳ You've already claimed your daily XP today. Come back tomorrow!")
+
+    daily_claims[uid] = today
+    save_json(DAILY_FILE, daily_claims)
+    await add_xp(ctx.author.id, 50, ctx.channel)  # 50 XP reward
+    await ctx.followup.send(f"✅ {ctx.author.mention}, you claimed your daily reward of **50 XP**!")
+    await log_event(f"🎁 Daily XP claimed by {ctx.author}")
+
+# ----------------------
 # Core Commands
 # ----------------------
+@bot.hybrid_command(name="linkepic", description="Link your Epic Games username")
+async def linkepic(ctx, epic_username: str):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
+    epic_links[str(ctx.author.id)] = epic_username
+    save_json(EPIC_FILE, epic_links)
+    await ctx.followup.send(f"🔗 Linked your Epic username to **{epic_username}**")
+    await log_event(f"🔗 {ctx.author} linked Epic → {epic_username}")
+
+@bot.hybrid_command(name="epicslinked", description="Show all linked Epic accounts")
+async def epicslinked(ctx):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
+    if not epic_links:
+        return await ctx.followup.send("❌ No Epic accounts linked yet.")
+    lines = [f"<@{uid}> → {uname}" for uid, uname in epic_links.items()]
+    await ctx.followup.send("📜 **Linked Epic Accounts:**\n" + "\n".join(lines))
+    await log_event("📜 Epic links list requested")
+
 @bot.hybrid_command(name="ping", description="Test the bot")
 async def ping(ctx):
-    await send_reply(ctx, "🏓 Pong!")
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+    await ctx.followup.send("🏓 Pong!")
     await log_event("🏓 Ping command used")
 
 @bot.hybrid_command(name="rank", description="Check your XP and rank")
 async def rank(ctx):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
     xp = xp_data.get(str(ctx.author.id), 0)
     role = get_rank_role(assign_rank(xp))
-    await send_reply(ctx, f"⭐ {ctx.author.mention}, you have {xp} XP ({role})")
+    await ctx.followup.send(f"⭐ {ctx.author.mention}, you have {xp} XP ({role})")
     await log_event(f"📊 Rank checked by {ctx.author} — {xp} XP, {role}")
+
 # ----------------------
 # XP Leaderboard
 # ----------------------
@@ -204,8 +254,11 @@ async def xpleaderboard(ctx):
 @bot.hybrid_command(name="grantxp", description="Grant XP to a user (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def grantxp(ctx, member: discord.Member, amount: int):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(ephemeral=True)
+
     await add_xp(member.id, amount, ctx.channel)
-    await send_reply(ctx, f"✅ Granted {amount} XP to {member.mention}", ephemeral=True)
+    await ctx.followup.send(f"✅ Granted {amount} XP to {member.mention}", ephemeral=True)
     await log_event(f"✅ {ctx.author} granted {amount} XP to {member}")
 
 # ----------------------
@@ -223,8 +276,16 @@ async def fetch_fortnite_stats(epic_username):
                 if "data" not in data:
                     return None
                 stats = data["data"]["stats"]["all"]["overall"]
-                return {"kd": stats.get("kd", 0), "wins": stats.get("wins", 0)}
-    except Exception:
+
+                return {
+                    "kd": stats.get("kd", 0),
+                    "wins": stats.get("wins", 0),
+                    "matches": stats.get("matches", 0),
+                    "kills": stats.get("kills", 0),
+                    "winRate": stats.get("winRate", 0.0)
+                }
+    except Exception as e:
+        print(f"⚠️ Error fetching stats: {e}")
         return None
 
 last_cleaner = None
@@ -295,18 +356,65 @@ async def autopost_leaderboard():
             await log_event("📊 Weekly KD leaderboard autoposted.")
 
 # ----------------------
+# Fortnite Player Stats
+# ----------------------
+@bot.hybrid_command(name="mystats", description="Show your linked Fortnite stats")
+async def mystats(ctx):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
+    uid = str(ctx.author.id)
+    epic = epic_links.get(uid)
+    if not epic:
+        return await ctx.followup.send("❌ You haven't linked your Epic account. Use `/linkepic <username>` first.")
+
+    stats = await fetch_fortnite_stats(epic)
+    if not stats:
+        return await ctx.followup.send(f"⚠️ Could not fetch stats for **{epic}**.")
+
+    embed = discord.Embed(title=f"🎮 {epic} — Lifetime Stats", color=discord.Color.blue())
+    embed.add_field(name="🏆 Wins", value=stats.get("wins", 0))
+    embed.add_field(name="🔪 K/D", value=stats.get("kd", 0))
+    embed.add_field(name="🎮 Matches", value=stats.get("matches", "N/A"))
+    await ctx.followup.send(embed=embed)
+    await log_event(f"📊 /mystats used by {ctx.author} → {epic}")
+
+@bot.hybrid_command(name="compare", description="Compare Fortnite stats between 2 linked users")
+async def compare(ctx, user1: discord.Member, user2: discord.Member):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
+    epic1 = epic_links.get(str(user1.id))
+    epic2 = epic_links.get(str(user2.id))
+    if not epic1 or not epic2:
+        return await ctx.followup.send("❌ Both users must have linked their Epic accounts.")
+
+    stats1 = await fetch_fortnite_stats(epic1)
+    stats2 = await fetch_fortnite_stats(epic2)
+    if not stats1 or not stats2:
+        return await ctx.followup.send("⚠️ Could not fetch stats for one or both players.")
+
+    embed = discord.Embed(title="⚔️ Fortnite Stat Showdown", color=discord.Color.gold())
+    embed.add_field(name=f"{epic1}", value=f"🏆 Wins: {stats1['wins']}\n🔪 K/D: {stats1['kd']}", inline=True)
+    embed.add_field(name=f"{epic2}", value=f"🏆 Wins: {stats2['wins']}\n🔪 K/D: {stats2['kd']}", inline=True)
+    await ctx.followup.send(embed=embed)
+    await log_event(f"⚔️ /compare: {user1} vs {user2}")
+# ----------------------
 # Birthday System
 # ----------------------
 @bot.hybrid_command(name="setbirthday", description="Set your birthday (YYYY-MM-DD)")
 async def setbirthday(ctx, date: str):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
     try:
         datetime.strptime(date, "%Y-%m-%d")
         birthdays[str(ctx.author.id)] = date
         save_json(BIRTHDAY_FILE, birthdays)
-        await send_reply(ctx, f"🎂 {ctx.author.mention}, birthday set to {date}")
+        await ctx.followup.send(f"🎂 {ctx.author.mention}, birthday set to {date}")
         await log_event(f"🎂 Birthday set for {ctx.author} → {date}")
     except ValueError:
-        await send_reply(ctx, "❌ Invalid format. Use YYYY-MM-DD")
+        await ctx.followup.send("❌ Invalid format. Use YYYY-MM-DD")
         await log_event(f"⚠️ Invalid birthday format by {ctx.author}")
 
 @tasks.loop(hours=24)
@@ -320,6 +428,7 @@ async def check_birthdays():
                 await channel.send(f"🎮 <@{uid}> has reached **Level {age}** today! 🎉")
                 await add_xp(int(uid), 500, channel)
                 await log_event(f"🎉 Birthday detected for <@{uid}> — Level {age}")
+
 # ----------------------
 # Tournament Commands
 # ----------------------
@@ -372,52 +481,123 @@ async def winterfest_challenge():
         await log_event(f"❄️ Winterfest challenge posted: {mode} {squad}")
 
 # ----------------------
+# Deep Scan: Messages + XP + Links + Birthdays
+# ----------------------
+async def scan_message_history(limit_per_channel=None):
+    """Scans messages across all text channels for XP, linkepic, setbirthday, reactions."""
+    if not bot.guilds:
+        return
+
+    guild = bot.guilds[0]
+    for channel in guild.text_channels:
+        try:
+            async for msg in channel.history(limit=limit_per_channel, oldest_first=True):
+                if msg.author.bot:
+                    continue
+                uid = str(msg.author.id)
+
+                # XP for messages
+                await add_xp(msg.author.id, 5, channel)
+
+                # XP for reactions
+                for reaction in msg.reactions:
+                    async for user in reaction.users():
+                        if not user.bot:
+                            await add_xp(user.id, 10, channel)
+
+                # Catch legacy !linkepic
+                if msg.content.startswith("!linkepic") or msg.content.startswith("/linkepic"):
+                    parts = msg.content.split(maxsplit=1)
+                    if len(parts) > 1:
+                        epic_links[uid] = parts[1].strip()
+                        save_json(EPIC_FILE, epic_links)
+                        await log_event(f"🔗 Backscan linked Epic for {msg.author} → {parts[1].strip()}")
+
+                # Catch legacy !setbirthday
+                if msg.content.startswith("!setbirthday") or msg.content.startswith("/setbirthday"):
+                    parts = msg.content.split(maxsplit=1)
+                    if len(parts) > 1:
+                        try:
+                            datetime.strptime(parts[1].strip(), "%Y-%m-%d")
+                            birthdays[uid] = parts[1].strip()
+                            save_json(BIRTHDAY_FILE, birthdays)
+                            await log_event(f"🎂 Backscan set birthday for {msg.author} → {parts[1].strip()}")
+                        except ValueError:
+                            pass
+
+        except Exception as e:
+            await log_event(f"⚠️ Could not scan {channel.name}: {e}")
+
+# ----------------------
 # Backscan + Health Check
 # ----------------------
 async def run_backscan():
-    await check_birthdays()
-    img = await generate_kd_leaderboard(epic_links)
-    if img and leaderboard_channel():
-        await leaderboard_channel().send("📊 Catch-up KD Leaderboard", file=discord.File(img))
-        await log_event("📊 Backscan KD leaderboard refreshed.")
+    """Deep backscan across all channels: XP, links, birthdays, leaderboards"""
+    try:
+        await scan_message_history(limit_per_channel=None)
 
-@bot.hybrid_command(name="backscan", description="Run daily scan manually")
+        # Birthdays
+        await check_birthdays()
+
+        # KD leaderboard
+        img = await generate_kd_leaderboard(epic_links)
+        if img and leaderboard_channel():
+            await leaderboard_channel().send("📊 Catch-up KD Leaderboard", file=discord.File(img))
+            await log_event("📊 Backscan KD leaderboard refreshed.")
+
+        # XP leaderboard
+        if xp_data and leaderboard_channel():
+            order = ["UNREAL","CHAMPION","ELITE","DIAMOND III","DIAMOND II","DIAMOND I",
+                     "PLATINUM III","PLATINUM II","PLATINUM I","GOLD III","GOLD II","GOLD I",
+                     "SILVER III","SILVER II","SILVER I","BRONZE III","BRONZE II","BRONZE I"]
+
+            embed = discord.Embed(title="🏆 Catch-up XP Leaderboard", color=discord.Color.purple())
+            grouped = {rank: [] for rank in order}
+            for uid, xp in xp_data.items():
+                rank = get_rank_role(assign_rank(xp))
+                if rank in grouped:
+                    grouped[rank].append((uid, xp))
+            for rank in order:
+                if grouped[rank]:
+                    members = sorted(grouped[rank], key=lambda x: x[1], reverse=True)
+                    embed.add_field(
+                        name=rank,
+                        value="\n".join([f"<@{u}> — {x} XP" for u, x in members]),
+                        inline=False
+                    )
+            await leaderboard_channel().send(embed=embed)
+            await log_event("🏆 Backscan XP leaderboard refreshed.")
+
+        await log_event("✅ Deep backscan completed successfully.")
+
+    except Exception as e:
+        await log_event(f"⚠️ Backscan global error: {e}")
+
+@bot.hybrid_command(name="backscan", description="Run deep scan manually")
 async def backscan(ctx):
     if ctx.interaction:
         await ctx.interaction.response.defer(thinking=True)
+
     await run_backscan()
-    await ctx.followup.send("✅ Backscan complete")
+    await ctx.followup.send("✅ Backscan complete — XP, links, birthdays synced.")
     await log_event(f"✅ Backscan run by {ctx.author}")
 
-@bot.hybrid_command(name="health", description="Health check (UptimeRobot)")
-async def health(ctx):
-    if ctx.interaction:
-        await ctx.interaction.response.defer(thinking=True)
-
-    await run_backscan()
-    if ctx.interaction:
-        await ctx.followup.send("✅ Health scan complete")
-
-    log_ch = logs_channel()
-    if log_ch:
-        await log_ch.send("✅ Bot is up and responding.")
-        await log_ch.send("🏓 Pong!")
-
 # ----------------------
-# Deep Self-Maintenance
+# Self-Maintenance (Healthz pings)
 # ----------------------
 async def run_self_maintenance():
     try:
-        # 1. Birthdays
+        await scan_message_history(limit_per_channel=500)  # catch-up sample
+
         await check_birthdays()
 
-        # 2. KD leaderboard rebuild
+        # KD leaderboard
         img = await generate_kd_leaderboard(epic_links)
         if img and leaderboard_channel():
             await leaderboard_channel().send("📊 Self-maintenance KD Leaderboard", file=discord.File(img))
             await log_event("📊 Self-maintenance KD leaderboard refreshed.")
 
-        # 3. Ensure QOTD
+        # Ensure QOTD
         if qotd_data["questions"]:
             available = [q for q in qotd_data["questions"] if q not in used_qotd]
             if not available:
@@ -430,7 +610,7 @@ async def run_self_maintenance():
                 await ch.send(f"❓ <@&{CREW_ROLE_ID}> **QOTD (catch-up):** {q}")
                 await log_event(f"❓ Catch-up QOTD posted: {q}")
 
-        # 4. Podcast check
+        # Podcast check
         if PODCAST_RSS_FEED and PODCAST_CHANNEL_ID:
             feed = feedparser.parse(PODCAST_RSS_FEED)
             if feed.entries:
@@ -440,7 +620,7 @@ async def run_self_maintenance():
                     await ch.send(f"🎙️ Podcast check: Latest episode is {latest.title}\n{latest.link}")
                     await log_event(f"🎙️ Podcast check posted: {latest.title}")
 
-        # 5. Backup
+        # Backup
         save_json(BACKUP_FILE, {
             "xp": xp_data,
             "epic": epic_links,
@@ -450,7 +630,6 @@ async def run_self_maintenance():
         })
         await log_event("💾 Self-maintenance backup saved.")
 
-        # 6. Finish
         if logs_channel():
             await logs_channel().send("🛠️ Self-maintenance completed successfully.")
 
@@ -458,6 +637,19 @@ async def run_self_maintenance():
         if logs_channel():
             await logs_channel().send(f"⚠️ Self-maintenance error: {e}")
 
+@bot.hybrid_command(name="health", description="Health check (UptimeRobot)")
+async def health(ctx):
+    if ctx.interaction:
+        await ctx.interaction.response.defer(thinking=True)
+
+    await run_self_maintenance()
+    if ctx.interaction:
+        await ctx.followup.send("✅ Health maintenance complete")
+
+    log_ch = logs_channel()
+    if log_ch:
+        await log_ch.send("✅ Bot is up and responding.")
+        await log_ch.send("🏓 Pong!")
 # ----------------------
 # Creator Map Tracker
 # ----------------------
@@ -506,6 +698,7 @@ async def check_creator_maps():
                 creator_maps["posted"].setdefault(creator_id, []).append(map_id)
                 save_json(CREATOR_FILE, creator_maps)
                 await log_event(f"🗺️ New map posted: {creator_id} — {map_id}")
+
 # ----------------------
 # Fun Engagement Features
 # ----------------------
@@ -518,10 +711,12 @@ async def daily_qotd():
         return
     if not qotd_data["questions"]:
         return
+
     available = [q for q in qotd_data["questions"] if q not in used_qotd]
     if not available:
         used_qotd.clear()
         available = qotd_data["questions"]
+
     q = random.choice(available)
     used_qotd.append(q)
     ch = bot.get_channel(QOTD_CHANNEL_ID)
@@ -575,7 +770,6 @@ async def secret_challenge():
         await log_event(f"🤫 Secret mission DM sent to {member}")
     except:
         await log_event("⚠️ Secret mission DM failed to deliver")
-
 # ----------------------
 # Podcast Autoposter
 # ----------------------
@@ -612,13 +806,18 @@ async def daily_backup():
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
+
+    # Try to sync commands
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} commands")
-        await log_event(f"✅ Synced {len(synced)} commands")
+        names = [c.name for c in synced]
+        print(f"✅ Synced {len(synced)} commands: {names}")
+        if logs_channel():
+            await logs_channel().send(f"✅ Synced {len(synced)} commands: {', '.join(names)}")
     except Exception as e:
         print(f"⚠️ Sync error: {e}")
-        await log_event(f"⚠️ Sync error: {e}")
+        if logs_channel():
+            await logs_channel().send(f"⚠️ Sync error: {e}")
 
     # Start background tasks
     autopost_leaderboard.start()
@@ -659,7 +858,6 @@ async def on_ready():
                 )
         await leaderboard_channel().send(embed=embed)
         await log_event("🏆 XP leaderboard generated on startup")
-
 # ----------------------
 # Start
 # ----------------------
