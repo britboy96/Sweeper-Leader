@@ -37,6 +37,18 @@ from discord import app_commands
 from keep_alive import keep_alive
 from generate_leaderboard_image import generate_leaderboard_image
 from leaderboard_utils import assign_rank, get_rank_role
+from datetime import datetime, timezone
+
+def compute_week_label():
+    start_str = os.getenv("LEADERBOARD_START_DATE", "2025-08-05")
+    try:
+        start = datetime.fromisoformat(start_str).date()
+    except Exception:
+        start = datetime(2025,8,5).date()
+    today = datetime.now(timezone.utc).date()
+    weeks = ((today - start).days // 7) + 1
+    if weeks < 1: weeks = 1
+    return f"WK{weeks}"
 
 # ----------------------
 # Config & Env
